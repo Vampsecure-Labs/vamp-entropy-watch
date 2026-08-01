@@ -358,6 +358,7 @@ def mode_monitor(
 
     console.print(state.build_stats())
     console.print("\n[bold cyan]Monitor detenido.[/]")
+    return state
 
 
 def mode_scan(
@@ -408,6 +409,8 @@ def mode_scan(
         Path(output_json).write_text(json.dumps(payload, indent=2), encoding="utf-8")
         console.print(f"\n[green]✔ JSON guardado en {output_json}[/]")
 
+    return results
+
 
 # ────────────────────────────────────────────────────────────────────────────
 # CLI
@@ -448,7 +451,112 @@ def build_parser() -> argparse.ArgumentParser:
     scn.add_argument("-o", "--output", metavar="FILE",
                      help="Guardar resultado en JSON")
 
+    # Argumentos de informe unificado VSL (--client, --engagement, --auditor,
+    # --report-scope, --report-html, --report-pdf) — disponibles en ambos modos
+    from vampsec_report import add_report_args
+    add_report_args(mon)
+    add_report_args(scn)
+
     return p
+
+
+# =============================================================================
+# CONVERSOR A FORMATO DE INFORME UNIFICADO VSL
+# =============================================================================
+
+def _findings_vsl(items: list, threshold: float, target: str) -> list:
+    """
+    Convierte ficheros de alta entropía al formato Finding unificado de VampSecure Labs.
+
+    Acepta tanto la lista de dicts de mode_scan como la lista de FileState de monitor.
+    Solo se incluyen ficheros cuya entropía supera el umbral configurado.
+
+    Parámetros
+    ----------
+    items     : list  — Lista de dicts (scan) o FileState (monitor) con entropy
+    threshold : float — Umbral de entropía configurado en la sesión
+    target    : str   — Directorio raíz analizado
+
+    Retorna
+    -------
+    List[Finding]  — Lista de hallazgos en formato VSL con prefijo ENT-NNN
+    """
+    from vampsec_report import Finding as VSLFinding
+
+    hallazgos: list = []
+    n = 0
+
+    # Normalizar a dicts con claves homogéneas
+    normalized = []
+    for item in items:
+        if isinstance(item, dict):
+            normalized.append(item)
+        else:
+            # FileState dataclass → dict equivalente
+            normalized.append({
+                "path": item.path,
+                "name": item.name,
+                "entropy": item.entropy,
+                "status": item.status,
+                "size_bytes": item.size_bytes,
+                "quarantined": item.quarantined,
+                "detected_at": item.detected_at,
+            })
+
+    # Solo alertas reales (por encima del umbral)
+    alertas = [r for r in normalized if r.get("entropy", 0) >= threshold]
+
+    for r in sorted(alertas, key=lambda x: -x.get("entropy", 0)):
+        n += 1
+        ent = r.get("entropy", 0.0)
+
+        # Severidad según nivel de entropía por encima del umbral
+        if ent >= 7.8:
+            severidad = "CRITICAL"
+        elif ent >= 7.4:
+            severidad = "HIGH"
+        else:
+            severidad = "MEDIUM"
+
+        # Ruta relativa
+        try:
+            ruta_rel = str(Path(r["path"]).relative_to(target))
+        except ValueError:
+            ruta_rel = r["path"]
+
+        partes_evidencia = [
+            f"Entropía: {ent:.4f} bits/símbolo (umbral: {threshold})",
+            f"Fichero: {ruta_rel}",
+        ]
+        if r.get("size_bytes"):
+            partes_evidencia.append(f"Tamaño: {r['size_bytes'] / 1024:.1f} KB")
+        if r.get("quarantined"):
+            partes_evidencia.append("CUARENTENA APLICADA")
+        if r.get("detected_at"):
+            partes_evidencia.append(f"Detectado: {r['detected_at']}")
+
+        hallazgos.append(VSLFinding(
+            id          = f"ENT-{n:03d}",
+            title       = f"Fichero de alta entropía: {r.get('name', ruta_rel)}",
+            severity    = severidad,
+            description = (
+                f"El fichero '{ruta_rel}' presenta una entropía de {ent:.4f} bits/símbolo, "
+                f"superior al umbral configurado de {threshold}. "
+                "Una entropía elevada puede indicar cifrado no autorizado (ransomware), "
+                "datos comprimidos no declarados, o contenido ofuscado."
+            ),
+            evidence    = " | ".join(partes_evidencia),
+            affected    = ruta_rel,
+            remediation = (
+                "Verificar que el cifrado del fichero es legítimo y autorizado. "
+                "Si el fichero ha sido cifrado por ransomware, restaurar desde backup, "
+                "aislar el sistema y analizar el vector de entrada. "
+                "Activar monitorización de integridad de ficheros (FIM) para detectar cambios futuros."
+            ),
+            tags        = ["entropy", "ransomware-detection", severidad.lower()],
+        ))
+
+    return hallazgos
 
 
 def main() -> None:
@@ -474,7 +582,7 @@ def main() -> None:
         else:
             q_dir = target / "quarantine"
 
-        mode_monitor(
+        state = mode_monitor(
             target=target,
             threshold=args.threshold,
             quarantine_dir=q_dir,
@@ -483,14 +591,44 @@ def main() -> None:
             interval=args.interval,
         )
 
+        # ── Informe unificado VSL (cliente) ───────────────────────────────────
+        if getattr(args, "report_html", None) or getattr(args, "report_pdf", None):
+            from vampsec_report import VampSecReport, meta_from_args
+            meta   = meta_from_args(args, tool="vamp-entropy-watch", version=VERSION)
+            report = VampSecReport(
+                meta=meta,
+                findings=_findings_vsl(state.alerts, args.threshold, str(target)),
+            )
+            if args.report_html:
+                report.to_html_client(args.report_html)
+                console.print(f"[bold green]✔ Informe cliente HTML guardado: {args.report_html}[/]")
+            if args.report_pdf:
+                report.to_pdf(args.report_pdf)
+                console.print(f"[bold green]✔ Informe cliente PDF guardado: {args.report_pdf}[/]")
+
     elif args.mode == "scan":
-        mode_scan(
+        results = mode_scan(
             target=target,
             threshold=args.threshold,
             recursive=args.recursive,
             ignore_exts=DEFAULT_IGNORE_EXTS,
             output_json=getattr(args, "output", None),
         )
+
+        # ── Informe unificado VSL (cliente) ───────────────────────────────────
+        if getattr(args, "report_html", None) or getattr(args, "report_pdf", None):
+            from vampsec_report import VampSecReport, meta_from_args
+            meta   = meta_from_args(args, tool="vamp-entropy-watch", version=VERSION)
+            report = VampSecReport(
+                meta=meta,
+                findings=_findings_vsl(results or [], args.threshold, str(target)),
+            )
+            if args.report_html:
+                report.to_html_client(args.report_html)
+                console.print(f"[bold green]✔ Informe cliente HTML guardado: {args.report_html}[/]")
+            if args.report_pdf:
+                report.to_pdf(args.report_pdf)
+                console.print(f"[bold green]✔ Informe cliente PDF guardado: {args.report_pdf}[/]")
 
 
 if __name__ == "__main__":
