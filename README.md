@@ -1,101 +1,136 @@
-# vamp-entropy-watch
+<h1 align="center">vamp-entropy-watch</h1>
+<p align="center">
+  <strong>Real-time Shannon entropy monitor for early ransomware detection and encrypted file analysis</strong><br>
+  <em>VampSecure Labs · Security Research Division</em>
+</p>
 
-**VampSecure Labs — Security Research Division**  
-Detector de actividad ransomware por análisis de entropía de Shannon en ficheros.
+<p align="center">
+  <img src="https://img.shields.io/badge/python-3.10%2B-blue?style=flat-square&logo=python&logoColor=white">
+  <img src="https://img.shields.io/badge/platform-linux%20%7C%20macos-lightgrey?style=flat-square">
+  <img src="https://img.shields.io/badge/license-research%20only-red?style=flat-square">
+  <img src="https://img.shields.io/badge/VampSecure-Labs-8B0000?style=flat-square">
+</p>
 
 ---
 
-## Descripción
+## Overview
 
-Herramienta de defensa proactiva que detecta patrones de cifrado masivo de ficheros
-característicos de ataques ransomware, mediante el cálculo de entropía de Shannon.
+`vamp-entropy-watch` monitors directories for ransomware activity by computing the Shannon entropy of files as they are created or modified. Encrypted content approaches the theoretical maximum of 8 bits/byte and is statistically distinguishable from plaintext (~3–5 bits/byte) and even from legitimately compressed data (~7–7.5 bits/byte). When a file exceeds the configured entropy threshold, the tool raises an alert and optionally moves the file to a quarantine directory with read-only permissions to contain further damage.
 
-Un fichero cifrado (o comprimido sin cabecera reconocible) presenta una distribución de
-bytes casi uniforme, con entropía próxima al máximo teórico de 8 bits/byte. Un umbral
-de H ≥ 7.0 indica con alta probabilidad que el contenido ha sido cifrado.
+It operates in two modes: a continuous `monitor` mode with a live Rich terminal table, and a one-shot `scan` mode for point-in-time audits and CI/CD pipeline integration.
 
-Soporta dos modos de operación: monitorización continua de directorios con cuarentena
-automática, y escaneo puntual con informe JSON.
+## Features
 
-## Concepto técnico
+- **Shannon entropy calculation** per file: H(X) = −Σ P(xᵢ) · log₂ P(xᵢ) over all 256 byte values; reads up to 1 MB per file for performance on large datasets
+- **Four entropy levels**: ENCRYPTED (≥ threshold, default 7.0) / HIGH (≥ 88% of threshold) / MEDIUM (≥ 5.0) / SAFE (< 5.0)
+- **Continuous `monitor` mode** with mtime/size change detection and configurable polling interval; displays a live-updating Rich table sorted by entropy descending
+- **Automatic quarantine** — moves alert-triggering files to a configurable quarantine directory and sets them read-only (0o444) to prevent further modification; collision-safe naming with timestamp prefix
+- **One-shot `scan` mode** — processes all files in the target directory once, prints the entropy table, and optionally exports JSON output sorted by entropy descending
+- **Recursive directory support** via `--recursive` flag in both modes
+- **Default extension exclusions** for already-compressed/binary formats (`.jpg`, `.zip`, `.gz`, `.exe`, `.dll`, etc.) that would generate spurious alerts
+- **Configurable entropy threshold** — adjust to match the specific file corpus: `--threshold 7.5` for stricter detection, `--threshold 6.5` for broader coverage
+- **JSON export** with per-file entropy, status label, size in bytes, and scan metadata
+- **Unified VSL client report** (HTML/PDF) via `--report-html` / `--report-pdf` in both modes
 
-La entropía de Shannon se calcula como:
+## Requirements
 
 ```
-H(X) = -Σ P(xᵢ) × log₂(P(xᵢ))
-```
-
-Donde `P(xᵢ)` es la probabilidad de aparición de cada valor de byte (0-255). Rango: 0 a 8.
-
-- **H < 5.0** — Texto plano, código fuente, datos estructurados
-- **H 5.0–7.0** — Zona gris (multimedia, ejecutables)
-- **H ≥ 7.0** — Alta probabilidad de cifrado o ransomware activo
-
-## Requisitos
-
-- Python 3.9+
-- Dependencias: `rich>=13.7.0`
-
-## Instalación
-
-```bash
-python3 -m venv .venv
-source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-## Uso
+| Package | Version |
+|---------|---------|
+| `rich`  | >= 13.7.0 |
+
+Standard library: `argparse`, `json`, `math`, `os`, `shutil`, `sys`, `time`, `datetime`, `pathlib`.
+
+## Installation
 
 ```bash
-# Monitorizar directorio en tiempo real (con cuarentena automática)
-python3 vamp_entropy_watch.py monitor /ruta/a/vigilar
-
-# Monitorizar sin cuarentena automática
-python3 vamp_entropy_watch.py monitor /ruta/a/vigilar --no-quarantine
-
-# Monitorizar de forma recursiva con umbral personalizado
-python3 vamp_entropy_watch.py monitor /ruta/a/vigilar --recursive --threshold 6.8 --interval 5
-
-# Escaneo puntual de directorio
-python3 vamp_entropy_watch.py scan /ruta/a/escanear
-
-# Escaneo con salida JSON
-python3 vamp_entropy_watch.py scan /ruta/a/escanear --output-json resultado.json --recursive
+git clone https://github.com/belky-me/vamp-entropy-watch.git
+cd vamp-entropy-watch
+pip install -r requirements.txt
 ```
 
-## Opciones monitor
+## Usage
 
-| Opción | Descripción |
-|--------|-------------|
-| `target` | Directorio a monitorizar |
-| `--threshold` | Umbral de entropía (por defecto: 7.0) |
-| `--interval` | Intervalo de escaneo en segundos (por defecto: 10) |
-| `--recursive` | Monitorizar subdirectorios |
-| `--no-quarantine` | Deshabilitar cuarentena automática |
-| `--quarantine-dir` | Directorio de cuarentena (por defecto: `/tmp/vamp_quarantine`) |
+```bash
+python vamp_entropy_watch.py --help
+```
 
-## Opciones scan
+Two subcommands are available: `monitor` and `scan`.
 
-| Opción | Descripción |
-|--------|-------------|
-| `target` | Directorio a escanear |
-| `--threshold` | Umbral de entropía (por defecto: 7.0) |
-| `--recursive` | Escanear subdirectorios |
-| `--output-json` | Guardar resultados en JSON |
+```
+usage: vamp-entropy-watch {monitor,scan} ...
 
-## Cuarentena
+subcommands:
+  monitor   Continuous directory surveillance
+  scan      One-shot entropy audit
+```
 
-Al detectar un fichero con entropía superior al umbral, la herramienta mueve el fichero
-automáticamente al directorio de cuarentena y aplica permisos `444` (solo lectura).
-Los ficheros en cuarentena no se vuelven a analizar.
+### Examples
 
-## Tipos de fichero ignorados por defecto
+**Continuously monitor the current directory with default threshold (7.0):**
+```bash
+python vamp_entropy_watch.py monitor
+```
 
-Formatos binarios nativamente de alta entropía: imágenes (jpg, png, gif, webp), vídeo
-(mp4, avi, mkv), audio (mp3, ogg, flac), comprimidos (zip, gz, bz2, 7z, rar), ejecutables
-(exe, dll), paquetes de apps (dmg, pkg, deb, rpm).
+**Monitor a specific path, recursive, with quarantine enabled:**
+```bash
+python vamp_entropy_watch.py monitor -p /data/uploads -r --quarantine /data/quarantine
+```
+
+**Monitor without automatic quarantine (alert-only mode):**
+```bash
+python vamp_entropy_watch.py monitor -p /var/www --no-quarantine
+```
+
+**Monitor with a stricter threshold and 5-second polling interval:**
+```bash
+python vamp_entropy_watch.py monitor -p /home --threshold 7.5 --interval 5
+```
+
+**One-shot scan, recursive, export results to JSON:**
+```bash
+python vamp_entropy_watch.py scan -p /srv/data -r -o entropy_report.json
+```
+
+**One-shot scan with lowered threshold for broader suspicious-file coverage:**
+```bash
+python vamp_entropy_watch.py scan -p . --threshold 6.5
+```
+
+## Entropy Level Reference
+
+| Label | Entropy Range | Typical Content |
+|-------|--------------|----------------|
+| ENCRYPTED | ≥ 7.0 (configurable) | Ransomware output, AES/ChaCha ciphertext |
+| HIGH | ≥ ~6.2 | Dense binary, some archive formats |
+| MEDIUM | ≥ 5.0 | Mixed binary/text, executables |
+| SAFE | < 5.0 | Plaintext, source code, HTML |
+
+## Output Formats
+
+| Format | Flag | Description |
+|--------|------|-------------|
+| Console (Rich) | _(default)_ | Live table with per-file entropy, status, size, and detection time |
+| JSON | `-o FILE` (scan mode) | Structured report with scan metadata and file list sorted by entropy |
+
+## Exit Codes
+
+| Code | Meaning |
+|------|---------|
+| `0` | No files exceeded the alert threshold |
+| `1` | One or more files exceeded the alert threshold |
+
+## Part of VampSecure Labs Toolkit
+
+This tool is part of the **VampSecure Labs Security Toolkit** — a collection of research-grade security tools for authorized penetration testing and red/blue team exercises.
+
+- Full toolkit: [github.com/belky-me](https://github.com/belky-me)
+- Orchestrator: [github.com/belky-me/vamp-orchestrator](https://github.com/belky-me/vamp-orchestrator)
 
 ---
 
 © VampSecure Studios — VampSecure Labs Security Research Division  
-Licencia: MIT
+For authorized security testing only.
