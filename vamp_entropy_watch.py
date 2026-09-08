@@ -79,14 +79,14 @@ VERSION = "2.0"
 TOOL_NAME = "vamp-entropy-watch"
 
 BANNER = r"""
-  ____   ____    _    __  __ ____  _____ ____ _   _ ____  _____   _        _    ____ ____
- \ \ / / _  |  / \  |  \/  |  _ \/ ____/ ___| | | |  _ \| ____| | |      / \  | __ ) ___|
-  \ V / (_| | / _ \ | |\/| | |_) \___ \| |___| | | | |_) |  _|   | |     / _ \ |  _ \___ \
-   | |  \__, |/ ___ \| |  | |  __/ ___) |___  | |_| |  _ <| |___  | |___ / ___ \| |_) |__) |
-   |_|     /_/_/   \_|_|  |_|_|   |____/\____|\___/|_| \_|_____| |_____/_/   \_|____/____/
-     by VampSecure Studios · vamp-entropy-watch v2.0 · Ransomware Detection via Shannon Entropy
-     ─────────────────────────────────────────────────────────────────────────────────────────
-     USO EXCLUSIVO EN AUDITORÍAS AUTORIZADAS · El uso no autorizado es ilegal
+__   ___   __  __ ___  ___ ___ ___ _   _ ___ ___ _      _   ___ ___ 
+\ \ / /_\ |  \/  | _ \/ __| __/ __| | | | _ \ __| |    /_\ | _ ) __|
+ \ V / _ \| |\/| |  _/\__ \ _| (__| |_| |   / _|| |__ / _ \| _ \__ \
+  \_/_/ \_\_|  |_|_|  |___/___\___|\___/|_|_\___|____/_/ \_\___/___/
+  by Antonio Hernandez "Belky" — VampSecure Studios
+  vamp-entropy-watch v2.0 · Ransomware Detection via Shannon Entropy
+  ────────────────────────────────────────────────────────────────────────
+  USO EXCLUSIVO EN AUDITORÍAS AUTORIZADAS · El uso no autorizado es ilegal
 """
 
 # Extensiones que se ignoran por defecto (ya cifradas o binarios)
@@ -531,7 +531,7 @@ def _findings_vsl(items: list, threshold: float, target: str) -> list:
         if r.get("size_bytes"):
             partes_evidencia.append(f"Tamaño: {r['size_bytes'] / 1024:.1f} KB")
         if r.get("quarantined"):
-            partes_evidencia.append("CUARENTENA APLICADA")
+            partes_evidencia.append("CUARENTENA ACTIVA")
         if r.get("detected_at"):
             partes_evidencia.append(f"Detectado: {r['detected_at']}")
 
