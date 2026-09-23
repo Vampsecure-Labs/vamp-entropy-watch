@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# © VampSecure Studios — VampSecure Labs Security Research Division
 """
 vamp_entropy_watch.py — Monitor de Entropía para Detección de Ransomware
 ========================================================================
@@ -41,6 +42,14 @@ MODELO DE ENTROPÍA
   Umbral por defecto: 7.0 bits/byte
   Niveles: CIFRADO (≥7.0) · SOSPECHOSO (≥6.2) · ELEVADO (≥5.0) · NORMAL (<5.0)
 
+ARGUMENTOS CLAVE (v2.1)
+-----------------------
+  --threshold FLOAT  Umbral de entropía Shannon (0-8, default: 7.0).
+                     Valores >4.5 son sospechosos; >7.0 indican posible cifrado.
+  --whitelist FILE   Fichero de texto con paths/nombres a ignorar (uno por línea).
+                     Las líneas terminadas en * actúan como prefijos.
+                     Si el fichero no existe, emite warning y continúa sin whitelist.
+
 DEPENDENCIAS
 ------------
   rich     >= 13.7.0  — Salida de consola con formato enriquecido y tablas
@@ -75,16 +84,16 @@ from rich.text import Text
 # Constantes
 # ────────────────────────────────────────────────────────────────────────────
 
-VERSION = "2.0"
+VERSION = "2.2"
 TOOL_NAME = "vamp-entropy-watch"
 
 BANNER = r"""
-__   ___   __  __ ___  ___ ___ ___ _   _ ___ ___ _      _   ___ ___ 
+__   ___   __  __ ___  ___ ___ ___ _   _ ___ ___ _      _   ___ ___
 \ \ / /_\ |  \/  | _ \/ __| __/ __| | | | _ \ __| |    /_\ | _ ) __|
  \ V / _ \| |\/| |  _/\__ \ _| (__| |_| |   / _|| |__ / _ \| _ \__ \
   \_/_/ \_\_|  |_|_|  |___/___\___|\___/|_|_\___|____/_/ \_\___/___/
   by Antonio Hernandez "Belky" — VampSecure Studios
-  vamp-entropy-watch v2.0 · Ransomware Detection via Shannon Entropy
+  vamp-entropy-watch v2.2 · Ransomware Detection via Shannon Entropy
   ────────────────────────────────────────────────────────────────────────
   USO EXCLUSIVO EN AUDITORÍAS AUTORIZADAS · El uso no autorizado es ilegal
 """
@@ -95,6 +104,213 @@ DEFAULT_IGNORE_EXTS: Set[str] = {
     ".zip", ".gz", ".7z", ".bz2", ".xz", ".rar", ".tar", ".apk",
     ".exe", ".dll", ".so", ".dylib", ".bin", ".iso", ".dmg",
 }
+
+# ────────────────────────────────────────────────────────────────────────────
+# Lista embebida de extensiones de ransomware conocidas  (v2.2)
+# ────────────────────────────────────────────────────────────────────────────
+# Fuente combinada: ID-Ransomware, MalwareHunterTeam, Bleeping Computer,
+# Coveware Q3 2026.  Se puede ampliar con --ransomware-feeds-url o con
+# un fichero local ~/.config/vamp-entropy-watch/extensions.json
+# ────────────────────────────────────────────────────────────────────────────
+
+RANSOMWARE_EXTENSIONS_EMBEBIDAS: Set[str] = {
+    # WannaCry / WannaCrypt
+    ".wnry", ".wcry", ".wncry", ".wncryt",
+    # Locky y variantes
+    ".locky", ".zepto", ".odin", ".shit", ".thor", ".aesir", ".zzzzz",
+    ".osiris", ".loli",
+    # Cerber
+    ".cerber", ".cerber2", ".cerber3",
+    # CryptoWall / CryptoLocker
+    ".cryptowall", ".locked", ".encrypted", ".enc", ".crypted", ".crypt",
+    ".cry", ".crypto",
+    # Dharma y familia CrySis
+    ".dharma", ".cezar", ".cesar", ".arena", ".cobra", ".java", ".arrow",
+    ".bip", ".monro", ".deal",
+    # Extensiones cortas genéricas muy usadas
+    ".aaa", ".abc", ".xyz", ".micro", ".ecc", ".ezz", ".exx", ".zzz",
+    ".vvv", ".xxx", ".ttt", ".ccc", ".kkk",
+    # MedusaLocker / variantes
+    ".bkp", ".btc", ".cf",
+    # GlobeImposter / Globe
+    ".globe", ".purge",
+    # Sage
+    ".sage",
+    # Spora
+    ".spora",
+    # Petya / NotPetya
+    ".petya",
+    # Extensiones de ofuscación/cifrado diversas
+    ".funk", ".darkness", ".wallet", ".mp3",
+    # Variantes con nombres de fichero completos como extensión
+    ".chifrator", ".crjoker",
+    # Extensiones utilizadas en familias diversas
+    ".ctb2", ".ctbl", ".decimnineteen", ".encode", ".fucked",
+    ".good", ".helpmeencrypt", ".herbst", ".keybtc", ".kimcilware",
+    ".kraken", ".losers", ".magic", ".nochance", ".nuclear55", ".nuke",
+    ".nymaim", ".odcodc", ".old", ".omg", ".popup", ".r5a", ".raid10",
+    ".rdm", ".restoredfiles", ".rmd", ".rsa", ".ruby", ".serpent",
+    ".silent", ".snlck", ".surprise", ".tgz", ".toxcrypt", ".ultra",
+    ".v8", ".vaultfile", ".vault", ".wflx", ".wlu", ".x1881", ".xort",
+    ".ykcol", ".zcrypt", ".zorro",
+    # Extensiones adicionales documentadas (2024-2026)
+    ".blackout", ".ryuk", ".conti", ".revil", ".sodinokibi", ".avaddon",
+    ".darkside", ".blackcat", ".alphv", ".lockbit", ".play", ".clop",
+    ".hive", ".blackbasta", ".medusa", ".akira", ".8base",
+    ".encrypt", ".enc1", ".enc2", ".locked1", ".crypted1", ".scrambled",
+    ".payfordecrypt", ".readinstructions", ".helpyourdecrypt",
+    # Familia Maze / Egregor
+    ".maze", ".egregor",
+    # Stop/DJVU
+    ".djvu", ".stop",
+    # MegaCortex
+    ".megac0rtex",
+}
+
+# Ruta del fichero de extensiones personalizadas (actualizable con --update-ransomware-list)
+_RANSOMWARE_EXT_CONFIG_PATH = Path.home() / ".config" / "vamp-entropy-watch" / "extensions.json"
+
+
+def cargar_extensiones_ransomware(feeds_extra_path: Optional[Path] = None) -> Set[str]:
+    """
+    Carga la lista efectiva de extensiones ransomware.
+
+    Combina la lista embebida RANSOMWARE_EXTENSIONS_EMBEBIDAS con:
+      1. El fichero de configuración local (~/.config/vamp-entropy-watch/extensions.json)
+         si existe (resultado de --update-ransomware-list previo).
+      2. Un fichero adicional pasado como feeds_extra_path (raramente necesario).
+
+    Retorna un set de extensiones en minúsculas con punto inicial.
+    """
+    extensiones = set(RANSOMWARE_EXTENSIONS_EMBEBIDAS)
+
+    # Cargar desde fichero de configuración local (si existe)
+    if _RANSOMWARE_EXT_CONFIG_PATH.exists():
+        try:
+            datos = _json.loads(_RANSOMWARE_EXT_CONFIG_PATH.read_text(encoding="utf-8"))
+            if isinstance(datos, list):
+                for ext in datos:
+                    ext = str(ext).strip().lower()
+                    if not ext.startswith("."):
+                        ext = "." + ext
+                    extensiones.add(ext)
+        except (OSError, _json.JSONDecodeError):
+            pass
+
+    # Cargar desde fichero extra si se proporcionó
+    if feeds_extra_path and feeds_extra_path.exists():
+        try:
+            datos = _json.loads(feeds_extra_path.read_text(encoding="utf-8"))
+            if isinstance(datos, list):
+                for ext in datos:
+                    ext = str(ext).strip().lower()
+                    if not ext.startswith("."):
+                        ext = "." + ext
+                    extensiones.add(ext)
+        except (OSError, _json.JSONDecodeError):
+            pass
+
+    return extensiones
+
+
+def actualizar_lista_ransomware(feed_url: str) -> bool:
+    """
+    Descarga un feed JSON de extensiones ransomware y lo guarda en el
+    fichero de configuración local para uso futuro.
+
+    El feed debe ser una URL que devuelve una lista JSON de strings (extensiones).
+    Ejemplo: ["locked", ".encrypted", ".crypt", ...]
+
+    Parámetros
+    ----------
+    feed_url : URL del feed JSON de extensiones ransomware
+
+    Retorna True si la actualización fue exitosa, False en caso de error.
+    """
+    import urllib.request as _ureq
+
+    console.print(f"[cyan]  Descargando feed de extensiones ransomware: {feed_url}[/]")
+
+    try:
+        req = _ureq.Request(
+            feed_url,
+            headers={"User-Agent": f"vamp-entropy-watch/{VERSION}"},
+        )
+        with _ureq.urlopen(req, timeout=15) as resp:
+            raw = resp.read().decode("utf-8", errors="replace")
+    except Exception as exc:
+        console.print(f"[red]  Error descargando feed: {exc}[/]")
+        return False
+
+    try:
+        datos = _json.loads(raw)
+    except _json.JSONDecodeError as exc:
+        console.print(f"[red]  Feed no es JSON válido: {exc}[/]")
+        return False
+
+    if not isinstance(datos, list):
+        console.print("[red]  El feed debe ser una lista JSON de strings.[/]")
+        return False
+
+    # Normalizar extensiones: minúsculas con punto inicial
+    normalizadas = []
+    for ext in datos:
+        ext = str(ext).strip().lower()
+        if not ext.startswith("."):
+            ext = "." + ext
+        normalizadas.append(ext)
+
+    if not normalizadas:
+        console.print("[yellow]  Feed descargado pero vacío.[/]")
+        return False
+
+    # Guardar en la ruta de configuración
+    _RANSOMWARE_EXT_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        _RANSOMWARE_EXT_CONFIG_PATH.write_text(
+            _json.dumps(normalizadas, indent=2, ensure_ascii=False),
+            encoding="utf-8",
+        )
+    except OSError as exc:
+        console.print(f"[red]  No se pudo guardar el feed: {exc}[/]")
+        return False
+
+    console.print(
+        f"[green]  ✔ Feed actualizado: {len(normalizadas)} extensiones guardadas en "
+        f"{_RANSOMWARE_EXT_CONFIG_PATH}[/]"
+    )
+    return True
+
+
+def verificar_extension_ransomware(file_path: Path, extensiones: Set[str]) -> bool:
+    """
+    Comprueba si la extensión del fichero es una extensión ransomware conocida.
+
+    Compara tanto la extensión simple (fichero.locky → .locky) como la
+    extensión doble/compuesta (fichero.pdf.wnry → .wnry).
+
+    Retorna True si la extensión coincide con alguna de las extensiones ransomware.
+    """
+    nombre = file_path.name.lower()
+    # Extensión principal (último punto)
+    ext_principal = file_path.suffix.lower()
+    if ext_principal in extensiones:
+        return True
+    # Buscar extensiones compuestas: fichero.pdf.locky → buscar .locky en el nombre
+    partes = nombre.split(".")
+    if len(partes) >= 2:
+        # Probar el último segmento y los últimos dos (para extensiones dobles)
+        for n in (1, 2):
+            ext_compuesta = "." + ".".join(partes[-n:])
+            if ext_compuesta in extensiones:
+                return True
+    return False
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# Módulo json — importar explícitamente para uso en funciones anteriores
+# ────────────────────────────────────────────────────────────────────────────
+import json as _json
 
 # Colores por rango de entropía
 def _entropy_style(h: float, threshold: float) -> str:
@@ -303,6 +519,76 @@ def _collect_files(
     return files
 
 
+def load_whitelist(fichero: Optional[str]) -> List[str]:
+    """
+    Carga el fichero de whitelist: una entrada por línea.
+    Las líneas en blanco o que comiencen por '#' se ignoran.
+    Si el fichero no existe emite un warning y devuelve lista vacía.
+
+    Parámetros
+    ----------
+    fichero : ruta al fichero de whitelist o None
+
+    Retorna
+    -------
+    List[str] con los patrones cargados (entradas exactas o prefijos con *)
+    """
+    if not fichero:
+        return []
+    p = Path(fichero)
+    if not p.exists():
+        console.print(
+            f"[yellow]⚠  Whitelist no encontrada: {fichero}. Continuando sin whitelist.[/]"
+        )
+        return []
+    try:
+        lineas = [
+            l.strip()
+            for l in p.read_text(encoding="utf-8", errors="replace").splitlines()
+            if l.strip() and not l.strip().startswith("#")
+        ]
+        console.print(f"[dim]Whitelist cargada: {len(lineas)} entradas ({fichero})[/]")
+        return lineas
+    except Exception as exc:
+        console.print(
+            f"[yellow]⚠  Error leyendo whitelist {fichero}: {exc}. Continuando sin whitelist.[/]"
+        )
+        return []
+
+
+def _is_whitelisted(file_path: Path, whitelist: List[str]) -> bool:
+    """
+    Comprueba si un fichero coincide con alguna entrada del whitelist.
+
+    Reglas de coincidencia:
+    - Coincidencia exacta: la entrada iguala la ruta absoluta o el nombre del fichero.
+    - Prefijo: si la entrada termina en '*', se comprueba que la ruta o el nombre
+      empiece por el prefijo (sin el '*').
+
+    Parámetros
+    ----------
+    file_path : Path del fichero a comprobar
+    whitelist : lista de patrones cargada con load_whitelist()
+
+    Retorna
+    -------
+    True si el fichero debe ignorarse, False en caso contrario.
+    """
+    if not whitelist:
+        return False
+    path_str = str(file_path)
+    name_str = file_path.name
+    for entry in whitelist:
+        if entry.endswith("*"):
+            prefix = entry[:-1]
+            if path_str.startswith(prefix) or name_str.startswith(prefix):
+                return True
+        else:
+            if path_str == entry or name_str == entry:
+                return True
+    return False
+
+
 def mode_monitor(
     target: Path,
     threshold: float,
@@ -310,11 +596,14 @@ def mode_monitor(
     recursive: bool,
     ignore_exts: Set[str],
     interval: float,
+    whitelist: Optional[List[str]] = None,
 ) -> None:
     """
     Modo vigilancia continua. Bucle infinito que detecta ficheros nuevos
     o modificados y calcula su entropía en cada iteración.
     """
+    if whitelist is None:
+        whitelist = []
     state = WatchState(threshold)
     known_mtimes: Dict[str, float] = {}
 
@@ -345,6 +634,10 @@ def mode_monitor(
                         if h is None:
                             continue
 
+                        # Ignorar ficheros de alta entropía que están en la whitelist
+                        if h >= threshold and _is_whitelisted(f, whitelist):
+                            continue
+
                         do_quarantine = False
                         if h >= threshold and quarantine_dir:
                             do_quarantine = quarantine_file(f, quarantine_dir)
@@ -367,11 +660,22 @@ def mode_scan(
     recursive: bool,
     ignore_exts: Set[str],
     output_json: Optional[str],
+    whitelist: Optional[List[str]] = None,
+    extensiones_ransomware: Optional[Set[str]] = None,
 ) -> None:
     """
     Modo escaneo único. Procesa todos los ficheros y genera un informe.
     No realiza acciones de cuarentena (solo análisis).
+
+    Si extensiones_ransomware no es None, los ficheros de alta entropía cuya
+    extensión coincide con la lista reciben severidad CRITICAL y el hallazgo
+    adicional RANSOMWARE_EXTENSION_MATCH.
     """
+    if whitelist is None:
+        whitelist = []
+    if extensiones_ransomware is None:
+        extensiones_ransomware = set()
+
     files = _collect_files(target, recursive, ignore_exts)
     console.print(f"Escaneando [cyan]{len(files)}[/] ficheros...\n")
 
@@ -383,17 +687,47 @@ def mode_scan(
             h = calculate_entropy(f)
             if h is None:
                 continue
+            # Ignorar ficheros de alta entropía que están en la whitelist
+            if h >= threshold and _is_whitelisted(f, whitelist):
+                continue
+
+            # Verificar si la extensión coincide con extensiones de ransomware conocidas
+            es_ransomware = (
+                h >= threshold and
+                extensiones_ransomware and
+                verificar_extension_ransomware(f, extensiones_ransomware)
+            )
+
             state.update(f, h)
-            results.append({
+            entrada = {
                 "path": str(f),
                 "name": f.name,
                 "entropy": h,
                 "status": _entropy_label(h, threshold),
                 "size_bytes": f.stat().st_size if f.exists() else 0,
-            })
+            }
+
+            # Escalar a CRITICAL y añadir hallazgo RANSOMWARE_EXTENSION_MATCH
+            if es_ransomware:
+                entrada["ransomware_extension_match"] = True
+                entrada["status"] = "⚠ RANSOMWARE"
+                console.print(
+                    f"  [bold red]RANSOMWARE_EXTENSION_MATCH[/]: {f.name} "
+                    f"(entropía={h:.3f}, ext={f.suffix})"
+                )
+
+            results.append(entrada)
 
     console.print(state.build_table())
     console.print(state.build_stats())
+
+    # Resumen de coincidencias ransomware
+    n_ransomware = sum(1 for r in results if r.get("ransomware_extension_match"))
+    if n_ransomware:
+        console.print(
+            f"\n[bold red]⚠ {n_ransomware} fichero(s) con extensión de ransomware conocida "
+            f"(RANSOMWARE_EXTENSION_MATCH)[/]"
+        )
 
     if output_json:
         payload = {
@@ -404,6 +738,7 @@ def mode_scan(
             "threshold": threshold,
             "total_scanned": len(results),
             "alerts": sum(1 for r in results if r["entropy"] >= threshold),
+            "ransomware_matches": n_ransomware,
             "files": sorted(results, key=lambda r: -r["entropy"]),
         }
         Path(output_json).write_text(json.dumps(payload, indent=2), encoding="utf-8")
@@ -430,7 +765,12 @@ def build_parser() -> argparse.ArgumentParser:
     mon.add_argument("-p", "--path", default=".", metavar="DIR",
                      help="Directorio a vigilar (default: .)")
     mon.add_argument("--threshold", type=float, default=7.0, metavar="FLOAT",
-                     help="Umbral de entropía para alerta (default: 7.0)")
+                     help="Umbral de entropía Shannon (0-8, default: 7.0). "
+                          "Valores >4.5 son sospechosos; >7.0 indican posible cifrado.")
+    mon.add_argument("--whitelist", metavar="FILE", default=None,
+                     help="Fichero con paths/nombres a ignorar aunque superen el umbral "
+                          "(uno por línea; líneas con * actúan como prefijo). "
+                          "Si el fichero no existe se emite warning y se continúa.")
     mon.add_argument("--quarantine", metavar="DIR",
                      help="Directorio de cuarentena (default: <path>/quarantine)")
     mon.add_argument("--no-quarantine", action="store_true",
@@ -445,11 +785,45 @@ def build_parser() -> argparse.ArgumentParser:
     scn.add_argument("-p", "--path", default=".", metavar="DIR",
                      help="Directorio a escanear (default: .)")
     scn.add_argument("--threshold", type=float, default=7.0, metavar="FLOAT",
-                     help="Umbral de entropía (default: 7.0)")
+                     help="Umbral de entropía Shannon (0-8, default: 7.0). "
+                          "Valores >4.5 son sospechosos; >7.0 indican posible cifrado.")
+    scn.add_argument("--whitelist", metavar="FILE", default=None,
+                     help="Fichero con paths/nombres a ignorar aunque superen el umbral "
+                          "(uno por línea; líneas con * actúan como prefijo). "
+                          "Si el fichero no existe se emite warning y se continúa.")
     scn.add_argument("--recursive", "-r", action="store_true",
                      help="Escanear subdirectorios recursivamente")
     scn.add_argument("-o", "--output", metavar="FILE",
                      help="Guardar resultado en JSON")
+
+    # Correlación con extensiones ransomware (v2.2) — disponible en ambos modos
+    for sub in (mon, scn):
+        sub.add_argument(
+            "--ransomware-feeds-url",
+            metavar="URL",
+            default=None,
+            dest="ransomware_feeds_url",
+            help=(
+                "URL de feed JSON externo con extensiones ransomware (lista de strings). "
+                "Si se especifica, amplía la lista embebida para este escaneo."
+            ),
+        )
+        sub.add_argument(
+            "--update-ransomware-list",
+            action="store_true",
+            dest="update_ransomware_list",
+            help=(
+                "Descargar el feed de --ransomware-feeds-url y guardarlo en "
+                "~/.config/vamp-entropy-watch/extensions.json para uso futuro. "
+                "Requiere --ransomware-feeds-url."
+            ),
+        )
+        sub.add_argument(
+            "--no-ransomware-check",
+            action="store_true",
+            dest="no_ransomware_check",
+            help="Deshabilitar la correlación de extensiones ransomware conocidas.",
+        )
 
     # Argumentos de informe unificado VSL (--client, --engagement, --auditor,
     # --report-scope, --report-html, --report-pdf) — disponibles en ambos modos
@@ -574,6 +948,60 @@ def main() -> None:
         console.print(f"[red]ERROR: No es un directorio: {target}[/]")
         sys.exit(1)
 
+    # Cargar whitelist (común a ambos modos)
+    wl = load_whitelist(getattr(args, "whitelist", None))
+
+    # ── Gestión de extensiones ransomware  (v2.2) ────────────────────────────
+    _feeds_url             = getattr(args, "ransomware_feeds_url", None)
+    _actualizar_lista      = getattr(args, "update_ransomware_list", False)
+    _sin_check_ransomware  = getattr(args, "no_ransomware_check", False)
+
+    # Si se pide actualizar la lista, descargar y guardar, luego salir
+    if _actualizar_lista:
+        if not _feeds_url:
+            console.print(
+                "[red]  --update-ransomware-list requiere --ransomware-feeds-url[/]"
+            )
+            sys.exit(1)
+        exito = actualizar_lista_ransomware(_feeds_url)
+        sys.exit(0 if exito else 1)
+
+    # Cargar extensiones efectivas (embebidas + fichero local + feed extra si hay URL)
+    _feeds_extra_path: Optional[Path] = None
+    if _feeds_url and not _sin_check_ransomware:
+        # Descargar feed temporalmente para este escaneo (no guardar en disco)
+        import urllib.request as _ureq
+        try:
+            req = _ureq.Request(
+                _feeds_url,
+                headers={"User-Agent": f"vamp-entropy-watch/{VERSION}"},
+            )
+            with _ureq.urlopen(req, timeout=15) as _resp:
+                _raw = _resp.read().decode("utf-8", errors="replace")
+            import json as _json_tmp
+            _datos_feed = _json_tmp.loads(_raw)
+            if isinstance(_datos_feed, list):
+                import tempfile as _tmp
+                _tf = _tmp.NamedTemporaryFile(
+                    mode="w", suffix=".json", delete=False, encoding="utf-8"
+                )
+                _json_tmp.dump(_datos_feed, _tf)
+                _tf.close()
+                _feeds_extra_path = Path(_tf.name)
+                console.print(
+                    f"[dim]  Feed ransomware descargado: {len(_datos_feed)} extensiones[/]"
+                )
+        except Exception as exc:
+            console.print(f"[yellow]  Aviso: no se pudo descargar el feed ransomware: {exc}[/]")
+
+    # Cargar extensiones efectivas
+    _extensiones_ransomware: Optional[Set[str]] = None
+    if not _sin_check_ransomware:
+        _extensiones_ransomware = cargar_extensiones_ransomware(_feeds_extra_path)
+        console.print(
+            f"[dim]  Extensiones ransomware cargadas: {len(_extensiones_ransomware)}[/]"
+        )
+
     if args.mode == "monitor":
         if getattr(args, "no_quarantine", False):
             q_dir = None
@@ -589,6 +1017,7 @@ def main() -> None:
             recursive=args.recursive,
             ignore_exts=DEFAULT_IGNORE_EXTS,
             interval=args.interval,
+            whitelist=wl,
         )
 
         # ── Informe unificado VSL (cliente) ───────────────────────────────────
@@ -613,6 +1042,8 @@ def main() -> None:
             recursive=args.recursive,
             ignore_exts=DEFAULT_IGNORE_EXTS,
             output_json=getattr(args, "output", None),
+            whitelist=wl,
+            extensiones_ransomware=_extensiones_ransomware,
         )
 
         # ── Informe unificado VSL (cliente) ───────────────────────────────────

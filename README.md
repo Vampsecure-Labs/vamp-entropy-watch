@@ -1,3 +1,4 @@
+<!-- © VampSecure Studios — VampSecure Labs Security Research Division -->
 <h1 align="center">vamp-entropy-watch</h1>
 <p align="center">
   <strong>Real-time Shannon entropy monitor for early ransomware detection and encrypted file analysis</strong><br>
@@ -45,6 +46,13 @@ pip install -r requirements.txt
 Standard library: `argparse`, `json`, `math`, `os`, `shutil`, `sys`, `time`, `datetime`, `pathlib`.
 
 ## Installation
+
+
+```bash
+pip install vamp-entropy-watch
+# o con Homebrew:
+brew install vampsecure-labs/labs/vamp-entropy-watch
+```
 
 ```bash
 git clone https://github.com/belky-me/vamp-entropy-watch.git
@@ -134,3 +142,8 @@ This tool is part of the **VampSecure Labs Security Toolkit** — a collection o
 
 © VampSecure Studios — VampSecure Labs Security Research Division  
 For authorized security testing only.
+
+---
+
+## Versión
+v2.1 — VampSecure Labs Security Research Division
