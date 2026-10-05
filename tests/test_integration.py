@@ -7,24 +7,18 @@ se ejecuta mode_scan y se comprueban los resultados completos.
 Mínimo 5 tests de integración.
 """
 
-import os
 import json
+import os
 import sys
 from pathlib import Path
-
-import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from vamp_entropy_watch import (
-    mode_scan,
     DEFAULT_IGNORE_EXTS,
     RANSOMWARE_EXTENSIONS_EMBEBIDAS,
-    verificar_extension_ransomware,
-    WatchState,
-    calculate_entropy,
+    mode_scan,
 )
-
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 1. Integración: mode_scan detecta fichero de alta entropía

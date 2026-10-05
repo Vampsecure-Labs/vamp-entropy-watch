@@ -69,16 +69,14 @@ import os
 import shutil
 import sys
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional, Set
 
 from rich.console import Console
 from rich.live import Live
 from rich.panel import Panel
 from rich.table import Table
-from rich.text import Text
 
 # ────────────────────────────────────────────────────────────────────────────
 # Constantes
@@ -99,7 +97,7 @@ __   ___   __  __ ___  ___ ___ ___ _   _ ___ ___ _      _   ___ ___
 """
 
 # Extensiones que se ignoran por defecto (ya cifradas o binarios)
-DEFAULT_IGNORE_EXTS: Set[str] = {
+DEFAULT_IGNORE_EXTS: set[str] = {
     ".jpg", ".jpeg", ".png", ".gif", ".bmp", ".mp3", ".mp4", ".avi",
     ".zip", ".gz", ".7z", ".bz2", ".xz", ".rar", ".tar", ".apk",
     ".exe", ".dll", ".so", ".dylib", ".bin", ".iso", ".dmg",
@@ -113,7 +111,7 @@ DEFAULT_IGNORE_EXTS: Set[str] = {
 # un fichero local ~/.config/vamp-entropy-watch/extensions.json
 # ────────────────────────────────────────────────────────────────────────────
 
-RANSOMWARE_EXTENSIONS_EMBEBIDAS: Set[str] = {
+RANSOMWARE_EXTENSIONS_EMBEBIDAS: set[str] = {
     # WannaCry / WannaCrypt
     ".wnry", ".wcry", ".wncry", ".wncryt",
     # Locky y variantes
@@ -171,7 +169,7 @@ RANSOMWARE_EXTENSIONS_EMBEBIDAS: Set[str] = {
 _RANSOMWARE_EXT_CONFIG_PATH = Path.home() / ".config" / "vamp-entropy-watch" / "extensions.json"
 
 
-def cargar_extensiones_ransomware(feeds_extra_path: Optional[Path] = None) -> Set[str]:
+def cargar_extensiones_ransomware(feeds_extra_path: Path | None = None) -> set[str]:
     """
     Carga la lista efectiva de extensiones ransomware.
 
@@ -282,7 +280,7 @@ def actualizar_lista_ransomware(feed_url: str) -> bool:
     return True
 
 
-def verificar_extension_ransomware(file_path: Path, extensiones: Set[str]) -> bool:
+def verificar_extension_ransomware(file_path: Path, extensiones: set[str]) -> bool:
     """
     Comprueba si la extensión del fichero es una extensión ransomware conocida.
 
@@ -311,6 +309,7 @@ def verificar_extension_ransomware(file_path: Path, extensiones: Set[str]) -> bo
 # Módulo json — importar explícitamente para uso en funciones anteriores
 # ────────────────────────────────────────────────────────────────────────────
 import json as _json
+
 
 # Colores por rango de entropía
 def _entropy_style(h: float, threshold: float) -> str:
@@ -342,7 +341,7 @@ console = Console()
 # Cálculo de entropía
 # ────────────────────────────────────────────────────────────────────────────
 
-def calculate_entropy(file_path: Path, max_bytes: int = 1_048_576) -> Optional[float]:
+def calculate_entropy(file_path: Path, max_bytes: int = 1_048_576) -> float | None:
     """
     Calcula la entropía de Shannon de un fichero (en bits por byte, rango 0-8).
 
@@ -392,8 +391,8 @@ class WatchState:
 
     def __init__(self, threshold: float):
         self.threshold = threshold
-        self.files: Dict[str, FileState] = {}
-        self.alerts: List[FileState] = []
+        self.files: dict[str, FileState] = {}
+        self.alerts: list[FileState] = []
         self.scanned = 0
         self.quarantined = 0
 
@@ -498,8 +497,8 @@ def quarantine_file(file_path: Path, quarantine_dir: Path) -> bool:
 def _collect_files(
     target: Path,
     recursive: bool,
-    ignore_exts: Set[str],
-) -> List[Path]:
+    ignore_exts: set[str],
+) -> list[Path]:
     """
     Recolecta todos los ficheros a monitorear según la configuración.
     Excluye extensiones ignoradas y el propio directorio de cuarentena.
@@ -519,7 +518,7 @@ def _collect_files(
     return files
 
 
-def load_whitelist(fichero: Optional[str]) -> List[str]:
+def load_whitelist(fichero: str | None) -> list[str]:
     """
     Carga el fichero de whitelist: una entrada por línea.
     Las líneas en blanco o que comiencen por '#' se ignoran.
@@ -556,7 +555,7 @@ def load_whitelist(fichero: Optional[str]) -> List[str]:
         return []
 
 
-def _is_whitelisted(file_path: Path, whitelist: List[str]) -> bool:
+def _is_whitelisted(file_path: Path, whitelist: list[str]) -> bool:
     """
     Comprueba si un fichero coincide con alguna entrada del whitelist.
 
@@ -592,11 +591,11 @@ def _is_whitelisted(file_path: Path, whitelist: List[str]) -> bool:
 def mode_monitor(
     target: Path,
     threshold: float,
-    quarantine_dir: Optional[Path],
+    quarantine_dir: Path | None,
     recursive: bool,
-    ignore_exts: Set[str],
+    ignore_exts: set[str],
     interval: float,
-    whitelist: Optional[List[str]] = None,
+    whitelist: list[str] | None = None,
 ) -> None:
     """
     Modo vigilancia continua. Bucle infinito que detecta ficheros nuevos
@@ -605,7 +604,7 @@ def mode_monitor(
     if whitelist is None:
         whitelist = []
     state = WatchState(threshold)
-    known_mtimes: Dict[str, float] = {}
+    known_mtimes: dict[str, float] = {}
 
     console.print(Panel(
         f"Directorio: [bold]{target.resolve()}[/]\n"
@@ -658,10 +657,10 @@ def mode_scan(
     target: Path,
     threshold: float,
     recursive: bool,
-    ignore_exts: Set[str],
-    output_json: Optional[str],
-    whitelist: Optional[List[str]] = None,
-    extensiones_ransomware: Optional[Set[str]] = None,
+    ignore_exts: set[str],
+    output_json: str | None,
+    whitelist: list[str] | None = None,
+    extensiones_ransomware: set[str] | None = None,
 ) -> None:
     """
     Modo escaneo único. Procesa todos los ficheros y genera un informe.
@@ -967,7 +966,7 @@ def main() -> None:
         sys.exit(0 if exito else 1)
 
     # Cargar extensiones efectivas (embebidas + fichero local + feed extra si hay URL)
-    _feeds_extra_path: Optional[Path] = None
+    _feeds_extra_path: Path | None = None
     if _feeds_url and not _sin_check_ransomware:
         # Descargar feed temporalmente para este escaneo (no guardar en disco)
         import urllib.request as _ureq
@@ -995,7 +994,7 @@ def main() -> None:
             console.print(f"[yellow]  Aviso: no se pudo descargar el feed ransomware: {exc}[/]")
 
     # Cargar extensiones efectivas
-    _extensiones_ransomware: Optional[Set[str]] = None
+    _extensiones_ransomware: set[str] | None = None
     if not _sin_check_ransomware:
         _extensiones_ransomware = cargar_extensiones_ransomware(_feeds_extra_path)
         console.print(

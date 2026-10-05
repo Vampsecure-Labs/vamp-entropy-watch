@@ -6,11 +6,10 @@ Proporciona ficheros de prueba de alta y baja entropía, la función helper
 entropia_shannon, y configuraciones para test_unit.py y test_integration.py.
 """
 
-import os
 import math
-import pytest
-from pathlib import Path
+import os
 
+import pytest
 
 # ── Helper de entropía de Shannon (referencia independiente) ─────────────────
 

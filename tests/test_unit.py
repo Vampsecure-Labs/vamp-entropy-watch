@@ -10,27 +10,23 @@ Mínimo 12 tests unitarios.
 
 import os
 import sys
-import math
 from pathlib import Path
-
-import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+from tests.conftest import entropia_shannon
 from vamp_entropy_watch import (
-    calculate_entropy,
-    verificar_extension_ransomware,
-    _entropy_label,
-    _entropy_style,
-    WatchState,
     DEFAULT_IGNORE_EXTS,
     RANSOMWARE_EXTENSIONS_EMBEBIDAS,
-    quarantine_file,
+    WatchState,
+    _entropy_label,
+    _entropy_style,
     _is_whitelisted,
+    calculate_entropy,
     load_whitelist,
+    quarantine_file,
+    verificar_extension_ransomware,
 )
-from tests.conftest import entropia_shannon
-
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 1. calculate_entropy — fichero de alta entropía
