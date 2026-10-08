@@ -132,6 +132,61 @@ python vamp_entropy_watch.py scan -p . --threshold 6.5
 | `0` | No files exceeded the alert threshold |
 | `1` | One or more files exceeded the alert threshold |
 
+## Sample Output
+
+```
+$ python vamp_entropy_watch.py monitor -p /data/uploads -r --threshold 7.0
+
+ vamp-entropy-watch v2.1 — VampSecure Labs
+ Monitoring: /data/uploads (recursive)  |  Threshold: 7.0  |  Quarantine: /data/quarantine
+ Polling interval: 10 s  |  Press Ctrl-C to stop
+
+ File Entropy Monitor ────────────────────────────────────────────────────────────
+ File                                    Entropy   Status      Size       Detected
+ ─────────────────────────────────────────────────────────────────────────────────
+ contracts/invoice_final.docx.enc        7.992     ENCRYPTED   248 KB     14:31:02
+ contracts/report_2026.pdf.locked        7.988     ENCRYPTED   1.2 MB     14:31:02
+ contracts/accounts.xlsx.crypt           7.974     ENCRYPTED   88 KB      14:31:05
+ uploads/archive_backup.tar.gz           7.41      HIGH        34 MB      14:31:08
+ uploads/firmware_update.bin             6.83      HIGH        5.6 MB     14:31:08
+ uploads/user_manual.pdf                 4.72      MEDIUM      3.1 MB     14:31:08
+ uploads/config.yaml                     2.91      SAFE        4 KB       14:31:08
+ ─────────────────────────────────────────────────────────────────────────────────
+ Alerts triggered: 3 ENCRYPTED files quarantined → /data/quarantine/
+ [14:31:05] ALERT  contracts/accounts.xlsx.crypt  (7.974 bits/byte)  → quarantined
+```
+
+## Why vamp-entropy-watch vs. FSRM · Wazuh FIM · Tripwire
+
+| Capability | vamp-entropy-watch | FSRM (Windows) | Wazuh FIM | Tripwire |
+|---|---|---|---|---|
+| Shannon entropy calculation per file | ✅ | ❌ | ❌ | ❌ |
+| Cross-platform (Linux + macOS) | ✅ | ❌ Windows only | ✅ | ✅ |
+| Automatic quarantine on alert | ✅ | ✅ | ❌ | ❌ |
+| One-shot scan mode (CI/CD) | ✅ | ❌ | ❌ | ❌ |
+| Zero agent — single Python file | ✅ | ❌ OS feature | ❌ requires agent | ❌ requires agent |
+| Configurable entropy threshold | ✅ | ❌ | ❌ | ❌ |
+| JSON export + VSL client report | ✅ | ❌ | ⚠️ SIEM output | ⚠️ enterprise only |
+| Distinguishes encrypted vs. legitimately compressed | ✅ threshold + extension exclusions | ❌ | ❌ | ❌ |
+
+- **Entropy as a first-class signal**: file-system change watchers detect that a file changed — not *what it became*. Entropy catches ransomware that renames and re-encrypts in place with no extension change.
+- **Agentless, zero dependencies**: no SIEM, no agent to deploy, no kernel module. A single Python process with stdlib + `rich`; runs on any host in seconds.
+- **Adjustable sensitivity**: `--threshold 7.5` avoids false positives from legitimate encryption (GPG, SSH keys); `--threshold 6.5` broadens coverage to staged exfiltration payloads before full encryption.
+- **Containment by design**: automatic quarantine with read-only permissions (0o444) stops a ransomware process from modifying already-encrypted files and slows lateral encryption spread.
+
+## Check Coverage
+
+| Check ID | Description | Standard | Severity |
+|---|---|---|---|
+| ENT-001 | File entropy ≥ threshold (default 7.0) — consistent with AES/ChaCha ciphertext | MITRE ATT&CK T1486 | CRITICAL |
+| ENT-002 | File entropy ≥ 88% of threshold — dense binary, possible staged payload | MITRE ATT&CK T1027 | HIGH |
+| ENT-003 | File entropy ≥ 5.0 — mixed binary content, further analysis recommended | MITRE ATT&CK T1022 | MEDIUM |
+| ENT-004 | Bulk encrypted files (≥5 ENCRYPTED within one polling interval) — mass-encryption pattern | MITRE ATT&CK T1486 | CRITICAL |
+| ENT-005 | New file with ENCRYPTED entropy created in monitored directory | MITRE ATT&CK T1486 | CRITICAL |
+| ENT-006 | Known plaintext type (.txt, .docx, .xlsx) now shows ENCRYPTED entropy | MITRE ATT&CK T1486 | CRITICAL |
+| ENT-007 | File extension changed alongside high entropy (e.g. .docx → .docx.enc) | MITRE ATT&CK T1486 | HIGH |
+| ENT-008 | Excluded extension with unexpected high entropy detected on explicit rescan | MITRE ATT&CK T1027 | MEDIUM |
+
 ## Part of VampSecure Labs Toolkit
 
 This tool is part of the **VampSecure Labs Security Toolkit** — a collection of research-grade security tools for authorized penetration testing and red/blue team exercises.
